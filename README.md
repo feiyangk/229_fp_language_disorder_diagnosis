@@ -1,8 +1,38 @@
 # 229_fp_language_disorder_diagnosis
 
+## Setup
+
+### Create Virtual Environment
+
+Create and activate a Python virtual environment:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+
+# Activate virtual environment
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+```
+
+### Install Dependencies
+
+Install required packages:
+
+```bash
+pip install numpy scikit-learn
+
+# Optional: Install SHAP for ClusterSHAP analysis (used in K-Means model)
+pip install shap
+```
+
 ## Training Models
 
 This project includes three models for dysarthria detection. All models use processed TORGO features (MFCC/wav2vec, Frenchay, and optional Sentence-BERT prompt embeddings).
+
+**Note:** All data directory paths are relative to the project root. If your data is in a different location (e.g., on a remote server), use the `--data-dir` option to specify the full path.
 
 ### Logistic Regression
 
@@ -20,9 +50,16 @@ python models/logreg_dysarthria.py
 - `--max-iter`: Maximum iterations for LogisticRegression (default: `2000`)
 - `--model-out`: Optional path to save the trained model (pickle format)
 
-**Example:**
+**Examples:**
 ```bash
-python models/logreg_dysarthria.py --audio-features wav2vec --test-size 0.3 --model-out models/logreg_model.pkl
+# Basic training with default settings
+python models/logreg_dysarthria.py
+
+# Train with wav2vec features and save model
+python models/logreg_dysarthria.py --audio-features wav2vec --test-size 0.3 --model-out models/logreg_wav2vec.pkl
+
+# Train with custom data directory
+python models/logreg_dysarthria.py --data-dir torgo_balanced_subset --max-iter 3000
 ```
 
 ### Gaussian Mixture Model (EM)
@@ -40,9 +77,16 @@ python models/em_dysarthria.py
 - `--max-iter`: Maximum EM iterations (default: `500`)
 - `--covariance-type`: Covariance type - `full`, `tied`, `diag`, or `spherical` (default: `full`)
 
-**Example:**
+**Examples:**
 ```bash
+# Basic training with default settings
+python models/em_dysarthria.py
+
+# Train with 3 components and diagonal covariance
 python models/em_dysarthria.py --components 3 --covariance-type diag --max-iter 1000
+
+# Train with custom data directory
+python models/em_dysarthria.py --data-dir torgo_balanced_subset --covariance-type tied
 ```
 
 ### K-Means Clustering
@@ -63,7 +107,17 @@ python models/kmeans_dysarthria.py
 - `--cluster-shap-top-k`: Top features to display per cluster (default: `10`)
 - `--cluster-shap-trees`: Number of trees for surrogate random forest (default: `400`)
 
-**Example:**
+**Examples:**
 ```bash
+# Basic training with default settings
+python models/kmeans_dysarthria.py
+
+# Train with ClusterSHAP analysis
 python models/kmeans_dysarthria.py --clusters 2 --cluster-shap --cluster-shap-top-k 15
+
+# Train with custom data directory and more iterations
+python models/kmeans_dysarthria.py --data-dir torgo_balanced_subset --max-iter 1000
+
+# Train with ClusterSHAP using entire dataset
+python models/kmeans_dysarthria.py --cluster-shap --cluster-shap-samples 0
 ```

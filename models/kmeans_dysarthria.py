@@ -27,7 +27,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import StandardScaler
 
-DEFAULT_DATA_DIR = Path("/Users/kuangfy/Desktop/229 FP/torgo_processed_data")
+DEFAULT_DATA_DIR = Path("torgo_processed_data")
 
 
 def load_array(path: Path, description: str) -> np.ndarray:
