@@ -33,6 +33,9 @@ pip install transformers torch
 
 # Optional: Install boto3 for loading audio files from S3
 pip install boto3
+
+# Optional: Install tensorboard for training visualization
+pip install tensorboard
 ```
 
 **Note on S3:** If your raw audio files are stored in S3, the scripts can load them directly from S3 paths (e.g., `s3://bucket-name/path/to/audio.wav`). Make sure:
@@ -67,6 +70,8 @@ python models/logreg_dysarthria.py
 - `--random-state`: Random seed (default: `42`)
 - `--max-iter`: Maximum iterations for LogisticRegression (default: `2000`)
 - `--model-out`: Optional path to save the trained model (pickle format)
+- `--tensorboard-dir`: Directory for TensorBoard logs (default: `runs/logreg_<audio_features>_<timestamp>`)
+- `--no-tensorboard`: Disable TensorBoard logging
 
 **Examples:**
 ```bash
@@ -78,6 +83,12 @@ python models/logreg_dysarthria.py --audio-features wav2vec --test-size 0.3 --mo
 
 # Train with custom data directory
 python models/logreg_dysarthria.py --data-dir torgo_balanced_subset --max-iter 3000
+
+# Train with TensorBoard logging (view with: tensorboard --logdir runs)
+python models/logreg_dysarthria.py --test-size 0.3 --model-out models/logreg_mfcc.pkl
+
+# Train with custom TensorBoard directory
+python models/logreg_dysarthria.py --tensorboard-dir runs/my_experiment
 ```
 
 ### Gaussian Mixture Model (EM)

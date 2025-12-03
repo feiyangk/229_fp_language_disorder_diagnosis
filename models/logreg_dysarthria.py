@@ -190,6 +190,23 @@ def main() -> None:
     )
     print(f"Train samples: {X_train.shape[0]}, Test samples: {X_test.shape[0]}")
 
+    # Setup TensorBoard
+    writer = None
+    if not args.no_tensorboard and SummaryWriter is not None:
+        if args.tensorboard_dir is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            tensorboard_dir = Path(f"runs/logreg_{args.audio_features}_{timestamp}")
+        else:
+            tensorboard_dir = args.tensorboard_dir
+        tensorboard_dir.mkdir(parents=True, exist_ok=True)
+        writer = SummaryWriter(str(tensorboard_dir))
+        print(f"\nTensorBoard logs will be saved to: {tensorboard_dir}")
+        print(f"View with: tensorboard --logdir {tensorboard_dir.parent}")
+    elif args.no_tensorboard:
+        print("\nTensorBoard logging disabled")
+    elif SummaryWriter is None:
+        print("\nWarning: TensorBoard not available. Install with: pip install tensorboard")
+
     clf = Pipeline(
         steps=[
             ("scaler", StandardScaler()),
@@ -206,16 +223,81 @@ def main() -> None:
         ]
     )
 
+    # Log hyperparameters
+    if writer is not None:
+        hparams = {
+            "audio_features": args.audio_features,
+            "test_size": args.test_size,
+            "random_state": args.random_state,
+            "max_iter": args.max_iter,
+            "solver": "lbfgs",
+            "penalty": "l2",
+            "class_weight": "balanced",
+            "n_features": X.shape[1],
+            "n_train": X_train.shape[0],
+            "n_test": X_test.shape[0],
+        }
+        writer.add_hparams(hparams, {})
+
     print("\nTraining logistic regression...")
+    start_time = time.time()
     clf.fit(X_train, y_train)
+    training_time = time.time() - start_time
 
     y_pred = clf.predict(X_test)
+    y_pred_proba = clf.predict_proba(X_test)[:, 1]  # Probability of positive class
+    
+    # Calculate metrics
     acc = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, zero_division=0)
+    recall = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
+    cm = confusion_matrix(y_test, y_pred)
+    
     print(f"\nTest accuracy: {acc:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1-score: {f1:.4f}")
     print("\nConfusion matrix:")
-    print(confusion_matrix(y_test, y_pred))
+    print(cm)
     print("\nClassification report:")
     print(classification_report(y_test, y_pred, digits=4))
+
+    # Log metrics to TensorBoard
+    if writer is not None:
+        writer.add_scalar("Metrics/Accuracy", acc, 0)
+        writer.add_scalar("Metrics/Precision", precision, 0)
+        writer.add_scalar("Metrics/Recall", recall, 0)
+        writer.add_scalar("Metrics/F1_Score", f1, 0)
+        writer.add_scalar("Training/Time_seconds", training_time, 0)
+        
+        # Log confusion matrix as image
+        try:
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            
+            plt.figure(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=True)
+            plt.title("Confusion Matrix")
+            plt.ylabel("True Label")
+            plt.xlabel("Predicted Label")
+            writer.add_figure("Confusion_Matrix", plt.gcf(), 0)
+            plt.close()
+        except ImportError:
+            # If matplotlib/seaborn not available, just log the matrix as text
+            writer.add_text("Confusion_Matrix", str(cm))
+        
+        # Log hyperparameters with final metrics
+        final_metrics = {
+            "hparam/accuracy": acc,
+            "hparam/precision": precision,
+            "hparam/recall": recall,
+            "hparam/f1_score": f1,
+        }
+        writer.add_hparams(hparams, final_metrics)
+        
+        writer.close()
+        print(f"\nTensorBoard logs saved to: {tensorboard_dir}")
 
     if args.model_out:
         args.model_out.parent.mkdir(parents=True, exist_ok=True)
