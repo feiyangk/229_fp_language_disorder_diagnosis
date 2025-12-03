@@ -10,15 +10,32 @@ from __future__ import annotations
 
 import argparse
 import pickle
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    try:
+        from tensorboardX import SummaryWriter
+    except ImportError:
+        SummaryWriter = None
 
 DEFAULT_DATA_DIR = Path("torgo_processed_data")
 
@@ -63,7 +80,19 @@ def build_feature_matrix(root: Path, audio_feature_type: str = "mfcc") -> np.nda
         raise ValueError(f"Unknown audio feature type: {audio_feature_type}. Must be 'mfcc' or 'wav2vec'")
     
     if not audio_path.exists():
-        raise FileNotFoundError(f"Audio features file not found: {audio_path}")
+        available = []
+        if (root / "X_mfcc.npy").exists():
+            available.append("mfcc")
+        if (root / "X_wav2vec.npy").exists():
+            available.append("wav2vec")
+        
+        error_msg = f"Audio features file not found: {audio_path}"
+        if available:
+            error_msg += f"\nAvailable audio feature types: {', '.join(available)}"
+            error_msg += f"\nTry using: --audio-features {available[0]}"
+        else:
+            error_msg += f"\nNo audio feature files found in {root}"
+        raise FileNotFoundError(error_msg)
     
     X_audio = load_array(audio_path, f"{audio_name} features")
     blocks.append(X_audio)
@@ -125,6 +154,17 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional path to pickle the fitted model pipeline.",
+    )
+    parser.add_argument(
+        "--tensorboard-dir",
+        type=Path,
+        default=None,
+        help="Directory for TensorBoard logs (default: runs/logreg_<timestamp>)",
+    )
+    parser.add_argument(
+        "--no-tensorboard",
+        action="store_true",
+        help="Disable TensorBoard logging",
     )
     return parser.parse_args()
 

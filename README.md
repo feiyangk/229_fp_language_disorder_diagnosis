@@ -26,6 +26,23 @@ pip install numpy scikit-learn
 
 # Optional: Install SHAP for ClusterSHAP analysis (used in K-Means model)
 pip install shap
+
+# Optional: Install transformers and torch for wav2vec2 feature extraction
+# (required if you want to generate X_wav2vec.npy or use --audio-features wav2vec)
+pip install transformers torch
+
+# Optional: Install boto3 for loading audio files from S3
+pip install boto3
+```
+
+**Note on S3:** If your raw audio files are stored in S3, the scripts can load them directly from S3 paths (e.g., `s3://bucket-name/path/to/audio.wav`). Make sure:
+- AWS credentials are configured (via `~/.aws/credentials` or environment variables)
+- The `boto3` package is installed: `pip install boto3`
+- Audio file paths in your dataset point to S3 URIs
+
+If you already have a processed dataset and want to add wav2vec features from S3-stored audio files, use:
+```bash
+python generate_wav2vec_from_dataset.py --dataset torgo_processed_data/torgo_dataset.pkl
 ```
 
 ## Training Models
@@ -45,6 +62,7 @@ python models/logreg_dysarthria.py
 **Options:**
 - `--data-dir`: Directory containing processed TORGO arrays (default: `torgo_processed_data`)
 - `--audio-features`: Audio feature type - `mfcc` or `wav2vec` (default: `mfcc`)
+  - **Note:** `wav2vec` features require `X_wav2vec.npy` to exist in the data directory. If not found, use `mfcc` instead.
 - `--test-size`: Fraction of samples for testing (default: `0.2`)
 - `--random-state`: Random seed (default: `42`)
 - `--max-iter`: Maximum iterations for LogisticRegression (default: `2000`)

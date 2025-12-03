@@ -12,8 +12,21 @@ Required packages:
     - pathlib (built-in)
     - csv (built-in)
 
+Optional packages (for wav2vec2 features):
+    - transformers
+    - torch
+
+Optional packages (for S3 support):
+    - boto3
+
 Install dependencies:
     pip install numpy librosa sentence-transformers
+    
+    # For wav2vec2 feature extraction:
+    pip install transformers torch
+    
+    # For loading audio files from S3:
+    pip install boto3
 
 Usage:
     python generate_torgo_dataset.py
@@ -22,6 +35,7 @@ Output:
     The script creates a folder 'torgo_processed_data' containing:
     - torgo_dataset.pkl: Full dataset with all information
     - X_mfcc.npy: MFCC features (128 features per sample)
+    - X_wav2vec.npy: wav2vec2 features (768 features per sample, if transformers installed)
     - X_frenchay.npy: Frenchay notes (28 features per sample)
     - X_prompt_sbert.npy: Sentence-BERT prompt embeddings
     - Y.npy: Binary labels (1 = dystharthia, 0 = no dystharthia)
@@ -235,11 +249,53 @@ def extract_frenchay_notes(csv_path: str) -> List[float]:
     return frenchay_values
 
 
+def load_audio_from_path(audio_path: str) -> tuple:
+    """Load audio file from local path or S3.
+    
+    Returns:
+        tuple: (audio_data, sample_rate)
+    """
+    if audio_path.startswith('s3://'):
+        # Load from S3
+        try:
+            import boto3
+            from io import BytesIO
+            import tempfile
+        except ImportError:
+            raise ImportError(
+                "boto3 is required to load audio from S3. "
+                "Install it with: pip install boto3"
+            )
+        
+        # Parse S3 path: s3://bucket-name/path/to/file.wav
+        s3_path = audio_path[5:]  # Remove 's3://'
+        bucket_name, key = s3_path.split('/', 1)
+        
+        # Download to temporary file
+        s3_client = boto3.client('s3')
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            s3_client.download_fileobj(bucket_name, key, tmp_file)
+            tmp_path = tmp_file.name
+        
+        try:
+            # Load from temporary file
+            y, sr = librosa.load(tmp_path, sr=None)
+        finally:
+            # Clean up temporary file
+            import os
+            os.unlink(tmp_path)
+        
+        return y, sr
+    else:
+        # Load from local path
+        return librosa.load(audio_path, sr=None)
+
+
 def extract_mfcc_features(wav_path: str, n_mfcc: int = 128) -> np.ndarray:
-    """Extract MFCC features from WAV file."""
+    """Extract MFCC features from WAV file (local or S3)."""
     try:
-        # Load audio file
-        y, sr = librosa.load(wav_path, sr=None)
+        # Load audio file (handles both local and S3 paths)
+        y, sr = load_audio_from_path(wav_path)
         
         # Extract MFCC features
         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
@@ -251,6 +307,62 @@ def extract_mfcc_features(wav_path: str, n_mfcc: int = 128) -> np.ndarray:
     except Exception as e:
         print(f"Error processing WAV file {wav_path}: {e}")
         return np.zeros(n_mfcc)
+
+
+def extract_wav2vec_features(wav_path: str) -> np.ndarray:
+    """Extract wav2vec2 features from WAV file."""
+    try:
+        from transformers import Wav2Vec2Processor, Wav2Vec2Model
+        import torch
+    except ImportError:
+        # Only print warning once
+        if not hasattr(extract_wav2vec_features, '_import_warning_shown'):
+            print(
+                "Warning: transformers library not installed. "
+                "Run `pip install transformers torch` to enable wav2vec2 feature extraction. "
+                "Skipping wav2vec2 features for all files."
+            )
+            extract_wav2vec_features._import_warning_shown = True
+        return None
+    
+    try:
+        # Load processor and model (using a lightweight pre-trained model)
+        # Using facebook/wav2vec2-base which is a good balance of quality and speed
+        model_name = "facebook/wav2vec2-base"
+        
+        # Load model and processor (lazy loading - only load once)
+        if not hasattr(extract_wav2vec_features, '_processor'):
+            extract_wav2vec_features._processor = Wav2Vec2Processor.from_pretrained(model_name)
+            extract_wav2vec_features._model = Wav2Vec2Model.from_pretrained(model_name)
+            extract_wav2vec_features._model.eval()  # Set to evaluation mode
+        
+        processor = extract_wav2vec_features._processor
+        model = extract_wav2vec_features._model
+        
+        # Load audio file (handles both local and S3 paths)
+        y, sr = load_audio_from_path(wav_path)
+        # Resample to 16kHz if needed (wav2vec2 expects 16kHz)
+        if sr != 16000:
+            y = librosa.resample(y, orig_sr=sr, target_sr=16000)
+            sr = 16000
+        
+        # Process audio
+        inputs = processor(y, sampling_rate=16000, return_tensors="pt")
+        
+        # Extract features
+        with torch.no_grad():
+            outputs = model(**inputs)
+            # Get hidden states (last layer)
+            hidden_states = outputs.last_hidden_state
+        
+        # Take mean across time dimension to get a fixed-size feature vector
+        # hidden_states shape: (batch, time, features) -> (time, features)
+        wav2vec_mean = hidden_states.squeeze(0).mean(dim=0).numpy()
+        
+        return wav2vec_mean
+    except Exception as e:
+        print(f"Error processing WAV file {wav_path} with wav2vec2: {e}")
+        return None
 
 
 def read_prompt(prompt_path: str) -> str:
@@ -368,6 +480,9 @@ def process_speaker_folder(speaker_folder: Path, base_path: Path) -> List[Dict[s
                 print(f"    Warning: Failed to extract MFCC features for {wav_file.name}, skipping")
                 continue
             
+            # Extract wav2vec features (optional, may fail if transformers not installed)
+            wav2vec_features = extract_wav2vec_features(str(wav_file))
+            
             prompt_text = read_prompt(str(prompt_file))
             
             # Create data entry
@@ -377,6 +492,7 @@ def process_speaker_folder(speaker_folder: Path, base_path: Path) -> List[Dict[s
                 'session': session_name,
                 'wav_file': str(wav_file),
                 'mfcc_features': mfcc_features,
+                'wav2vec_features': wav2vec_features,
                 'prompt': prompt_text,
                 'frenchay_notes': np.array(frenchay_notes),
                 'y': y_value
@@ -451,6 +567,20 @@ def main():
     X_frenchay = np.array([entry['frenchay_notes'] for entry in all_data_entries])
     Y = np.array([entry['y'] for entry in all_data_entries])
     
+    # Extract wav2vec features (filter out None values)
+    wav2vec_entries = [entry['wav2vec_features'] for entry in all_data_entries]
+    has_wav2vec = any(f is not None for f in wav2vec_entries)
+    X_wav2vec = None
+    
+    if has_wav2vec:
+        # Check if all entries have wav2vec features
+        if all(f is not None for f in wav2vec_entries):
+            X_wav2vec = np.array(wav2vec_entries)
+        else:
+            print("Warning: Some entries missing wav2vec features. Skipping wav2vec array save.")
+            has_wav2vec = False
+            X_wav2vec = None
+    
     # Save prompts separately (as list since they're strings)
     prompts = [entry['prompt'] for entry in all_data_entries]
     prompt_embeddings = generate_prompt_embeddings(prompts)
@@ -462,6 +592,9 @@ def main():
     np.save(output_dir / "X_frenchay.npy", X_frenchay)
     np.save(output_dir / "Y.npy", Y)
     
+    if has_wav2vec and X_wav2vec is not None:
+        np.save(output_dir / "X_wav2vec.npy", X_wav2vec)
+    
     with open(output_dir / "prompts.pkl", 'wb') as f:
         pickle.dump(prompts, f)
     
@@ -469,10 +602,12 @@ def main():
         np.save(output_dir / "X_prompt_sbert.npy", prompt_embeddings)
     
     # Save metadata
+    wav2vec_dim = X_wav2vec.shape[1] if (has_wav2vec and X_wav2vec is not None) else None
     metadata = {
         'total_entries': len(all_data_entries),
         'mfcc_features': 128,
         'frenchay_features': len(FRENCHAY_FIELDS),
+        'wav2vec_features': wav2vec_dim,
         'dystharthia_count': dystharthia_count,
         'no_dystharthia_count': no_dystharthia_count,
         'frenchay_field_names': FRENCHAY_FIELDS,
@@ -487,6 +622,10 @@ def main():
     print(f"Files saved in: {output_dir}")
     print(f"  - torgo_dataset.pkl: Full dataset with all information")
     print(f"  - X_mfcc.npy: MFCC features (shape: {X_mfcc.shape})")
+    if has_wav2vec and X_wav2vec is not None:
+        print(f"  - X_wav2vec.npy: wav2vec2 features (shape: {X_wav2vec.shape})")
+    else:
+        print("  - X_wav2vec.npy: skipped (install transformers and torch to enable)")
     print(f"  - X_frenchay.npy: Frenchay notes (shape: {X_frenchay.shape})")
     print(f"  - Y.npy: Labels (shape: {Y.shape})")
     if prompt_embeddings_shape:
