@@ -2,7 +2,7 @@
 """
 Logistic-regression classifier for dysarthria detection.
 
-Uses the processed TORGO features (MFCC + Frenchay + optional Sentence-BERT prompt
+Uses the processed TORGO features (MFCC or wav2vec + Frenchay + optional Sentence-BERT prompt
 embeddings) to train a linear classifier and reports test metrics.
 """
 
@@ -24,11 +24,7 @@ DEFAULT_DATA_DIR = Path("/Users/kuangfy/Desktop/229 FP/torgo_processed_data")
 
 
 def load_array(path: Path, description: str) -> np.ndarray:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing {description}: {path}")
     arr = np.load(path)
-    if arr.ndim != 2:
-        raise ValueError(f"{description} must be 2D, got shape {arr.shape}")
     return arr
 
 
@@ -52,13 +48,26 @@ def maybe_load_prompt_embeddings(root: Path) -> Optional[np.ndarray]:
     return arr
 
 
-def build_feature_matrix(root: Path) -> np.ndarray:
+def build_feature_matrix(root: Path, audio_feature_type: str = "mfcc") -> np.ndarray:
     blocks: List[np.ndarray] = []
     names: List[str] = []
 
-    X_mfcc = load_array(root / "X_mfcc.npy", "MFCC features")
-    blocks.append(X_mfcc)
-    names.append("MFCC")
+    # Load audio features (MFCC or wav2vec)
+    if audio_feature_type.lower() == "mfcc":
+        audio_path = root / "X_mfcc.npy"
+        audio_name = "MFCC"
+    elif audio_feature_type.lower() == "wav2vec":
+        audio_path = root / "X_wav2vec.npy"
+        audio_name = "wav2vec"
+    else:
+        raise ValueError(f"Unknown audio feature type: {audio_feature_type}. Must be 'mfcc' or 'wav2vec'")
+    
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Audio features file not found: {audio_path}")
+    
+    X_audio = load_array(audio_path, f"{audio_name} features")
+    blocks.append(X_audio)
+    names.append(audio_name)
 
     X_frenchay = load_array(root / "X_frenchay.npy", "Frenchay features")
     blocks.append(X_frenchay)
@@ -85,6 +94,13 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_DATA_DIR,
         help="Directory containing processed TORGO arrays (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--audio-features",
+        type=str,
+        choices=["mfcc", "wav2vec"],
+        default="mfcc",
+        help="Audio feature type to use: 'mfcc' or 'wav2vec' (default: %(default)s)",
     )
     parser.add_argument(
         "--test-size",
@@ -121,7 +137,8 @@ def main() -> None:
         raise FileNotFoundError(f"Data directory does not exist: {data_dir}")
 
     print(f"Loading processed data from: {data_dir}")
-    X = build_feature_matrix(data_dir)
+    print(f"Using audio features: {args.audio_features}")
+    X = build_feature_matrix(data_dir, audio_feature_type=args.audio_features)
     y = load_labels(data_dir / "Y.npy")
 
     X_train, X_test, y_train, y_test = train_test_split(
